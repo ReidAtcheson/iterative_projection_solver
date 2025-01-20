@@ -6,31 +6,56 @@ import scipy.linalg as la
 seed=0
 rng=np.random.default_rng(seed)
 
-m=64
-restart=5
+restart=1
 k=restart
 
-#Random uniform matrix + alpha*identity
-#simple hard case for iterative solvers - has good conditioning
-#but spectrum is terrible for krylov methods
-A=rng.uniform(-1,1,size=(m,m))  + 2*np.eye(m)
+#2D 5 point stencil blocked up
+mx=64
+my=64
+bx=16
+by=16
+m=mx*my
+maxiter=50
+#Make empty sparse matrix
+A=sp.lil_matrix((mx*my,mx*my))
+def idx(ix,iy):
+    return ix+mx*iy
+for ix in range(0,mx):
+    for iy in range(0,my):
+        A[idx(ix,iy),idx(ix,iy)]=4
+        if ix>0:
+            A[idx(ix,iy),idx(ix-1,iy)]=-1
+        if ix<mx-1:
+            A[idx(ix,iy),idx(ix+1,iy)]=-1
+        if iy>0:
+            A[idx(ix,iy),idx(ix,iy-1)]=-1
+        if iy<my-1:
+            A[idx(ix,iy),idx(ix,iy+1)]=-1
+
+#Now form blocks by list of permutations
+perms=[]
+for ix in range(0,mx,bx):
+    for iy in range(0,my,by):
+        ixbeg=ix
+        ixend=min(ix+bx,mx)
+        iybeg=iy
+        iyend=min(iy+by,my)
+        p=[]
+        for i in range(ixbeg,ixend):
+            for j in range(iybeg,iyend):
+                p.append(idx(i,j))
+        perms.append(p)
+
+restart=5
+k=len(perms)
 
 
-#Tridiagonal matrix
-A=sp.diags([rng.normal(0,1,size=m),rng.normal(1,0.1,size=m),rng.normal(0,1,size=m)],[-1,0,1],shape=(m,m)).toarray()
-
-#Tridiagonal matrix with spectrum negated on half
-A=sp.diags([rng.normal(0,1,size=m),rng.normal(3,0.1,size=m),rng.normal(0,1,size=m)],[-1,0,1],shape=(m,m)).toarray()
-A[m//2:,:]=-A[m//2:,:]
 
 
 
-
-
-
-print("cond(A)=,",np.linalg.cond(A))
-print("min(real(eig(A)))=",np.min(np.real(la.eigvals(A))))
-print("max(real(eig(A)))=",np.max(np.real(la.eigvals(A))))
+#print("cond(A)=,",np.linalg.cond(A))
+#print("min(real(eig(A)))=",np.min(np.real(la.eigvals(A))))
+#print("max(real(eig(A)))=",np.max(np.real(la.eigvals(A))))
 
 #Manufacture a solution
 x=rng.uniform(-1,1,size=(m,))
@@ -42,7 +67,7 @@ def gmres_callback(xk):
     print(f"GMRES({restart}) iteration {it}, residual: {np.linalg.norm(b-A@xk)}")
     it+=1
 
-spla.gmres(A,b,callback=gmres_callback,callback_type='x',restart=restart,maxiter=20)
+spla.gmres(A,b,callback=gmres_callback,callback_type='x',restart=restart,maxiter=maxiter)
 
 
 
@@ -55,17 +80,16 @@ xh=np.zeros((m,))
 
 
 
-for it in range(20):
+for it in range(maxiter):
 
     r=b-A@xh
 
     def makeD(alphas):
         d=np.zeros((m,))
-        for j,i in enumerate(range(0,m,m//k)):
-            ibeg=i
-            iend=min(i+m//k,m)
-            d[ibeg:iend]=alphas[j]
-        return np.diag(d)
+        for j,p in enumerate(perms):
+            d[p]=alphas[j]
+        #return sparse matrix diagonal matrix containing `d` on diagonal
+        return sp.diags(d)
 
 
 
